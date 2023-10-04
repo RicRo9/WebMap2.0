@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Address Geocoding and Service Area Check</title>
+    <!-- Include Leaflet CSS and JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <!-- Include Turf.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.3.0/turf.min.js"></script>
+    <!-- Include the updated Leaflet Control Geocoder with Nominatim -->
+    <link rel="stylesheet" href="css/leaflet-control-geocoder.Geocoder.css">
+    <script src="js/leaflet-control-geocoder.Geocoder.js"></script>
+
+    <!-- Update Polygon Here, Every Quarter. Data is current with FCC release for public -->
+    <script src="data/NodeForWeb_Project_1.js"></script>
+    <script src="data/ServiceExtend_10mile_Project_0.js"></script>
+    <script src="data/ServiceExtend_5mile_Project_1.js"></script>
+    <script src="data/ServiceExtend_2mile_Project_2.js"></script>
+    <script src="data/ServiceExtend_1mile_Project_3.js"></script>
+    <style>
+        /* Global styles */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }
+
+        /* Header styles */
+        h1 {
+            text-align: center;
+            margin-top: 20px;
+            color: #333;
+        }
+
+        /* Main container styles */
+        main {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Form container styles */
+        .search-container {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-size: 16px;
+        }
+
+        button#geocodeButton {
+            background-color: #007bff;
+            color: #fff;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        button#geocodeButton:hover {
+            background-color: #0056b3;
+        }
+
+        /* Result container styles */
+        .result-container {
+            text-align: center;
+            padding: 20px 0;
+            font-weight: bold;
+        }
+
+        .highlighted {
+            padding: 10px;
+            border-radius: 3px;
+        }
+
+        .highlighted.green {
+            background-color: green;
+            color: #fff;
+        }
+
+        .highlighted.yellow {
+            background-color: yellow;
+            color: #000;
+        }
+
+        .highlighted.red {
+            background-color: red;
+            color: #fff;
+        }
+
+        /* Map container styles */
+        #map {
+            height: 400px;
+            margin-top: 20px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Check if an Address is Within a Service Area</h1>
+    <main>
+        <div class="search-container">
+            <label for="addressInput">Enter an Address:</label>
+            <input type="text" id="addressInput" placeholder="E.g., 123 Main St." />
+            <button id="geocodeButton">Check</button>
+        </div>
+        <div id="result" class="result-container"></div>
+        <div id="map"></div>
+    </main>
+    <script>
+        var map = L.map('map').setView([39.8283, -98.5795], 4); // Set initial view over the USA
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors-- MediacomGISSolutions'
+        }).addTo(map);
+
+        var osmGeocoder = L.Control.geocoder({
+            collapsed: true,
+            geocoder: L.Control.Geocoder.nominatim(),
+            placeholder: 'Enter an address...',
+            defaultMarkGeocode: false,
+        });
+
+        osmGeocoder.addTo(map);
+
+        var resultDiv = document.getElementById('result');
+        var marker;
+        var geocodingResult; // Declare geocodingResult outside the geocoding callback function
+
+        var serviceAreaLayers = [
+            { name: 'Active Service Footprint', data: json_NodeForWeb_Project_1, color: 'green', opacity: 0.5 },
+            { name: '1 mile of Active Service Footprint', data: json_ServiceExtend_1mile_Project_3, color: 'yellow', opacity: 0.5 },
+            { name: '2 miles of Active Service Footprint', data: json_ServiceExtend_2mile_Project_2, color: 'orange', opacity: 0.5 },
+            { name: '5 miles of Active Service Footprint', data: json_ServiceExtend_5mile_Project_1, color: 'red', opacity: 0.5 },
+            { name: '10 miles of Active Service Footprint', data: json_ServiceExtend_10mile_Project_0, color: 'red', opacity: 0.5 }
+        ];
+
+        function clearResult() {
+            resultDiv.innerHTML = '';
+            if (marker) {
+                map.removeLayer(marker);
+            }
+            map.eachLayer(function (layer) {
+                if (layer instanceof L.GeoJSON) {
+                    map.removeLayer(layer);
+                }
+            });
+        }
+
+        var geocodeButton = document.getElementById('geocodeButton');
+        geocodeButton.addEventListener('click', function () {
+            clearResult();
+            var addressInput = document.getElementById('addressInput').value;
+
+            // Use the geocode method from the Nominatim geocoder
+            L.Control.Geocoder.nominatim().geocode(addressInput, function (results) {
+                if (results && results.length > 0) {
+                    geocodingResult = results[0];
+                    var searchPoint = turf.point([geocodingResult.center.lng, geocodingResult.center.lat]);
+                    var isWithinPolygon = false;
+                    var index = 0;
+
+                    function checkServiceArea() {
+                        if (index >= serviceAreaLayers.length) {
+                            // Address is not within any service area, display the final message
+                            var message = 'No, this area is not within a service area or within proximity to an active service area.';
+                            resultDiv.innerHTML = `<span class="highlighted red">${message}</span>`;
+                            map.setView([geocodingResult.center.lat, geocodingResult.center.lng], 15); // Reset map view
+                            return;
+                        }
+
+                        var serviceAreaLayer = serviceAreaLayers[index].data;
+
+                        // Create a GeoJSON layer for the service area and add it to the map
+                        L.geoJSON(serviceAreaLayer, {
+                            style: function (feature) {
+                                return {
+                                    fillColor: serviceAreaLayers[index].color,
+                                    fillOpacity: serviceAreaLayers[index].opacity,
+                                    color: 'gray',
+                                    weight: 1
+                                };
+                            }
+                        }).addTo(map);
+
+                        // Iterate through each feature in the service area GeoJSON and check if the point is within any of them
+                        L.geoJSON(serviceAreaLayer).eachLayer(function (layer) {
+                            if (turf.booleanPointInPolygon(searchPoint, layer.feature.geometry)) {
+                                isWithinPolygon = true;
+                            }
+                        });
+
+                        if (isWithinPolygon) {
+                            // Address is within this service area, display the message
+                            var message = index === 0 ? `Yes, this location is within ${serviceAreaLayers[index].name}!` : `No, but you are within ${serviceAreaLayers[index].name}!`;
+                            if (index === 0) {
+                                resultDiv.innerHTML = `<span class="highlighted green">${message}</span>`;
+                            } else {
+                                resultDiv.innerHTML = `<span class="highlighted yellow">${message}</span>`;
+                            }
+                            // Pan and zoom the map to the searched location
+                            map.setView([geocodingResult.center.lat, geocodingResult.center.lng], 15);
+                            // Add a marker at the searched location
+                            marker = L.marker([geocodingResult.center.lat, geocodingResult.center.lng]).addTo(map);
+                        } else {
+                            // Address is not within this service area, check the next one
+                            index++;
+                            isWithinPolygon = false;
+                            checkServiceArea();
+                        }
+                    }
+
+                    // Start checking the service areas
+                    checkServiceArea();
+                } else {
+                    // Address is not within this service area, check the next one
+                    index++;
+                    isWithinPolygon = false;
+                    checkServiceArea();
+                }
+            });
+        });
+
+    </script>
+</body>
+</html>
